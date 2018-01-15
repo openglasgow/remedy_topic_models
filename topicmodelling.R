@@ -37,7 +37,7 @@ drop_terms = c(
   "response",
   "issue",
   "public",
-  "foi",
+  "act",
   "email",
   "service",
   "address",
@@ -49,19 +49,31 @@ drop_terms = c(
   "mail",
   "attach",
   "include",
-  "inclued",
-  "report"
+  "included",
+  "report",
+  "detail",
+  "communication",
+  "required",
+  "sir"
 )
 drop_terms_long = c(drop_terms, remedy_processed$stopwords_long)
 ### list of regex's to apply
-regexes = c("\\w*\\d[\\w\\d]+", #words with numbers in them
+regexes = c("\\b.*?\\..*?\\b", # Anything with a dot in it
+            "\\w*\\d[\\w\\d]+", #words with numbers in them
             "\\b[\\w]{1,2}\\b", #single or double character words
             "\\b[\\d]+\\b", # digit only terms
             "\\b(([\\w-]+://?|www[.])[^\\s()<>]+(?:\\([\\w\\d]+\\)|([^[:punct:]\\s]|/)))" # URL's
 ) 
 
+pos_types = c("NN", "NNS", "NNP", "NNPS", "JJ", "JJS", "JJR")
+
 ### Document processing pipeline
-processed_docs = corpus_filter(docs, drop_terms_long) %>% regex_remove(regexes)
+processed_docs = corpus_filter(docs, drop_terms_long, stem=F) %>% 
+                  regex_remove(regexes) %>% 
+                  strip_low_freq(5) %>% 
+                  lemmatize_docs() %>% 
+                  pos_strip(pos_types) %>% 
+                  corpus_filter(drop_terms_long, stem=T)
 
 ### Add to remedy
 remedy$details_doc = processed_docs
@@ -78,7 +90,7 @@ dtm <- DocumentTermMatrix(docs)
 
 #Set parameters for Gibbs sampling
 burnin <- 4000
-iter <- 2000
+iter <- 150000
 thin <- 500
 seed <-list(2003,5,63,100001,765)
 nstart <- 5
@@ -99,4 +111,49 @@ remedy_sliced$topic = topics(ldaOut)
 terms = terms(ldaOut, 7)
 
 ### Topic probabilities
-as.data.frame(ldaOut@gamma)
+topic_probs = as.data.frame(ldaOut@gamma)
+
+### Map topic numbers to words
+topic_titles = list("1" = "what do we know", 
+                    "2" = "social care contracts", 
+                    "3" = "parliamentary work", 
+                    "4" = "property and planning applications", 
+                    "5" = "vehicle parking charge notices", 
+                    "6" = "mail words",
+                    "7" = "road maintenance",
+                    "8" = "data transfer words",
+                    "9" = "local school information",
+                    "10" = "council jobs & pay",
+                    "11" = "generic business words",
+                    "12" = "registered companies",
+                    "13" = "documents on work carried out",
+                    "14" = "office words",
+                    "15" = "accident legal claims")
+
+### Apply topic names
+remedy_sliced = remedy_sliced %>% mutate(primary_topic = unlist(topic_titles[as.character(topic)]))
+
+### Add secondary and tertiary topics and probabilities
+sort_row = function(row){ sorted_row = gsub("V", "", names(sort(row, TRUE))) }
+get_probs = function(row){ sort(row, T)}
+
+topic_rankings = t(apply(topic_probs, 1, sort_row))
+topic_rankings_prob = t(apply(topic_probs, 1, get_probs))
+
+secondary_tertiary_topics = data.frame(t(sapply(1:nrow(remedy_sliced), function(x) {
+  ### set up vars
+  topic = remedy_sliced[x,"topic"]
+  topic_ranking_sorted = topic_rankings[x,]
+  topic_prob_sorted = topic_rankings_prob[x,]
+  ### Compare  
+  if(as.numeric(topic_ranking_sorted[2]) == topic){
+    c(topic_titles[topic_ranking_sorted[1]], topic_titles[topic_ranking_sorted[3]], topic_prob_sorted[1:3])
+  } else {
+    c(topic_titles[topic_ranking_sorted[2]], topic_titles[topic_ranking_sorted[3]], topic_prob_sorted[1:3])
+  }
+})))
+colnames(secondary_tertiary_topics) = c("secondary_topic", "tertiary_topic", "primary_prob", "secondary_prob", "tertiary_prob")
+secondary_tertiary_topics = data.frame(lapply(secondary_tertiary_topics, function(x) unlist(x)))
+### Bind topics and probs
+remedy_sliced = cbind(remedy_sliced, secondary_tertiary_topics)
+

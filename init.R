@@ -1,4 +1,5 @@
 ## Init script
+options(java.parameters = "-Xmx8000m")
 
 ### library
 library(ggplot2)
@@ -12,8 +13,13 @@ library(ggmap)
 library(RPostgreSQL)
 library(tokenizers)
 library(topicmodels)
+library(corpus)
+library(koRpus)
+#library(quanteda)
+library(textstem)
+library(NLP)
 library(tm)
-
+library(openNLP)
 
 ### local libs
 
